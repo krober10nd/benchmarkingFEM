@@ -1,48 +1,53 @@
 # Benchmark computational performance of higher-order mass-lumped FEM
 import firedrake as fd
-from firedrake import Constant, dx, exp, dot, grad
+from firedrake import Constant, dx, dot, grad, COMM_WORLD
+from firedrake.petsc import PETSc
 import finat
+from mpi4py import MPI
+import numpy as np
 
-import argparse
-import math
 import time
+import sys
+
+from helpers import RickerWavelet, delta_expr
 
 # import os
 
+__all__ = ["solver_CG"]
 
-def RickerWavelet(t, freq=2, amp=1.0):
-    """Time-varying source function"""
-    # shift so full wavelet is developd
-    t = t - 3 * (math.sqrt(6.0) / (math.pi * freq))
+PETSc.Log().begin()
+
+
+def get_time(event, comm=COMM_WORLD):
     return (
-        amp
-        * (1.0 - (1.0 / 2.0) * (2.0 * math.pi * freq) * (2.0 * math.pi * freq) * t * t)
-        * math.exp(
-            (-1.0 / 4.0) * (2.0 * math.pi * freq) * (2.0 * math.pi * freq) * t * t
-        )
+        comm.allreduce(PETSc.Log.Event(event).getPerfInfo()["time"], op=MPI.SUM)
+        / comm.size
     )
 
 
-def delta_expr(x0, x, z, y=None, sigma_x=2000.0):
-    """Spatial function to apply source"""
-    sigma_x = Constant(sigma_x)
-    if y is None:
-        return exp(-sigma_x * ((x - x0[0]) ** 2 + (z - x0[1]) ** 2))
-    else:
-        return exp(-sigma_x * ((x - x0[0]) ** 2 + (y - x0[1]) ** 2 + (z - x0[2]) ** 2))
+N = 20
 
 
-def solver_CG(degree, T, dimension, dt=0.001, lump_mass=False):
-    sd = dimension
+def solver_CG(el, deg, sd, T, dt=0.001, lump_mass=False, warm_up=False):
     if sd == 2:
-        mesh = fd.UnitSquareMesh(101, 201, diagonal="right")
+        if el == "tria":
+            mesh = fd.UnitSquareMesh(N, N)
+        elif el == "quad":
+            mesh = fd.UnitSquareMesh(N, N, quadilateral=True)
+        else:
+            raise ValueError("Unrecognized element type")
     elif sd == 3:
-        mesh = fd.UnitCubeMesh(20, 20, 20)
+        if el == "tetra":
+            mesh = fd.UnitCubeMesh(N, N, N)
+        elif el == "quad":
+            mesh = fd.UnitCubeMesh(N, N, N, quadilateral=True)
+        else:
+            raise ValueError("Unrecognized element type")
 
     if lump_mass:
-        V = fd.FunctionSpace(mesh, "KMV", degree)
+        V = fd.FunctionSpace(mesh, "KMV", deg)
     else:
-        V = fd.FunctionSpace(mesh, "CG", degree)
+        V = fd.FunctionSpace(mesh, "CG", deg)
 
     if lump_mass:
         quad_rule = finat.quadrature.make_quadrature(
@@ -58,9 +63,11 @@ def solver_CG(degree, T, dimension, dt=0.001, lump_mass=False):
         # if nspool > 0:
         #    outfile = File(os.getcwd() + "/results/simple_shots.pvd")
 
-    print("------------------------------------------")
-    print("The problem has " + str(V.dof_dset.total_size) + " degrees of freedom.")
-    print("------------------------------------------")
+    tot_dof = COMM_WORLD.allreduce(V.dof_dset.total_size, op=MPI.SUM)
+    if COMM_WORLD.rank == 0:
+        print("------------------------------------------")
+        print("The problem has " + str(tot_dof) + " degrees of freedom.")
+        print("------------------------------------------")
 
     nt = int(T / dt)  # number of timesteps
 
@@ -104,10 +111,10 @@ def solver_CG(degree, T, dimension, dt=0.001, lump_mass=False):
     r = fd.rhs(F)
     A = fd.assemble(a)
     R = fd.assemble(r)
-    solver = fd.LinearSolver(A, P=None, solver_parameters=params)
+    solver = fd.LinearSolver(A, solver_parameters=params, options_prefix="")
 
-    t1 = time.time()
     # timestepping loop
+    results = []
     for step in range(nt):
 
         t = step * float(dt)
@@ -115,7 +122,25 @@ def solver_CG(degree, T, dimension, dt=0.001, lump_mass=False):
         # update the source
         ricker.assign(RickerWavelet(t))
 
-        solver.solve(u_np1, R)
+        with PETSc.Log.Stage("{el}{deg}.N{N}".format(el=el, deg=deg, N=N)):
+            solver.solve(u_np1, R)
+
+            snes = get_time("SNESSolve")
+            ksp = get_time("KSPSolve")
+            pcsetup = get_time("PCSetUp")
+            pcapply = get_time("PCApply")
+            jac = get_time("SNESJacobianEval")
+            residual = get_time("SNESFunctionEval")
+            sparsity = get_time("CreateSparsity")
+
+            results.append(
+                [N, tot_dof, snes, ksp, pcsetup, pcapply, jac, residual, sparsity]
+            )
+
+        if warm_up:
+            # Warm up symbolics/disk cache
+            solver.solve(u_np1, R)
+            sys.exit("Warming up...")
 
         u_nm1.assign(u_n)
         u_n.assign(u_np1)
@@ -123,59 +148,18 @@ def solver_CG(degree, T, dimension, dt=0.001, lump_mass=False):
         if step % 100 == 0:
             # outfile.write(u_n)
             print("Time is " + str(t), flush=True)
-    return time.time() - t1
+    results = np.asarray(results)
+    if mesh.comm.rank == 0:
+        with open("scalar_wave.{el}.{deg}.csv".format(el=el, deg=deg), "w") as f:
+            np.savetxt(
+                f,
+                results,
+                fmt=["%d"] + ["%e"] * 8,
+                delimiter=",",
+                header="N,tot_dof,SNESSolve,KSPSolve,PCSetUp,PCApply,SNESJacobianEval,SNESFunctionEval,CreateSparsity",
+                comments="",
+            )
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Benchmark scalar wave formulations..."
-    )
-
-    parser.add_argument(
-        "--method",
-        dest="method",
-        type=str,
-        default=False,
-        required=True,
-        help="Run benchmark with method=('cg','lump')",
-    )
-
-    parser.add_argument(
-        "--degree",
-        dest="degree",
-        type=int,
-        default=1,
-        required=False,
-        help="run benchmark with spatial degree=(degree)",
-    )
-
-    parser.add_argument(
-        "--time",
-        dest="T",
-        type=float,
-        default=1.0,
-        required=False,
-        help="Run benchmark for `T` simulation seconds",
-    )
-
-    parser.add_argument(
-        "--dimension",
-        dest="dimension",
-        type=int,
-        default=2,
-        required=False,
-        help="Run benchmark for in spatial dimension `sd`",
-    )
-
-    args = parser.parse_args()
-
-    # Standard Lagrange FEM w or wo/ mass lumping
-    if args.method == "lump" or args.method == "cg":
-        if args.method == "lump":
-            timing = solver_CG(args.degree, args.T, args.dimension, lump_mass=True)
-            print("Wall-clock simulation time was: " + str(timing))
-        else:
-            timing = solver_CG(args.degree, args.T, args.dimension, lump_mass=False)
-            print("Wall-clock simulation time was: " + str(timing))
-    else:
-        raise "unrecognized option"
+# Call the solvers to do the benchmarking!
+solver_CG("tria", 1, 2, 1.0)
