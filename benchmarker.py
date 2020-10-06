@@ -33,9 +33,9 @@ def _get_mesh(el, sd, N):
         else:
             raise ValueError("Unrecognized element type")
     elif sd == 3:
-        if el == "tetra":
+        if el == "tria":
             mesh = fd.UnitCubeMesh(N, N, N)
-        elif el == "hexa":
+        elif el == "quad":
             mesh = fd.UnitCubeMesh(N, N, N, quadrilateral=True)
         else:
             raise ValueError("Unrecognized element type")
@@ -49,7 +49,10 @@ def _get_space(mesh, el, deg, lump_mass):
         if el == "tria":
             V = fd.FunctionSpace(mesh, "KMV", deg)
         elif el == "quad":
-            V = fd.FunctionSpace(mesh, "CG", deg, variant = "spectral")
+            element = fd.FiniteElement(
+                "CG", mesh.ufl_cell(), degree=deg, variant="spectral"
+            )
+            V = fd.FunctionSpace(mesh, element)
     else:
         V = fd.FunctionSpace(mesh, "CG", deg)
 
@@ -137,7 +140,7 @@ def solver_CG(el, deg, sd, T, N=40, dt=0.001, lump_mass=False, warm_up=False):
     for step in range(nt):
 
         with PETSc.Log.Stage("{el}{deg}.N{N}".format(el=el, deg=deg, N=N)):
-            ricker.assign(RickerWavelet(t))
+            ricker.assign(RickerWavelet(t, freq=6))
 
             R = fd.assemble(r, tensor=R)
 
@@ -183,4 +186,4 @@ def solver_CG(el, deg, sd, T, N=40, dt=0.001, lump_mass=False, warm_up=False):
 
 
 # Call the solvers to do the benchmarking
-solver_CG(el="tria", deg=1, sd=2, T=1.0, lump_mass=False)
+solver_CG(el="quad", deg=1, sd=2, T=1.0, dt=0.0005, lump_mass=True)
