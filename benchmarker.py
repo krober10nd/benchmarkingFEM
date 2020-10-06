@@ -49,7 +49,7 @@ def _get_space(mesh, el, deg, lump_mass):
         if el == "tria":
             V = fd.FunctionSpace(mesh, "KMV", deg)
         elif el == "quad":
-            V = fd.FunctionSpace(mesh, "CG", deg)
+            V = fd.FunctionSpace(mesh, "CG", deg, variant = "spectral")
     else:
         V = fd.FunctionSpace(mesh, "CG", deg)
 
