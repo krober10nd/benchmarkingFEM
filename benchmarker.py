@@ -24,9 +24,6 @@ def _get_time(event, comm=COMM_WORLD):
     )
 
 
-N = 20
-
-
 def _get_mesh(el, sd, N):
     if sd == 2:
         if el == "tria":
@@ -82,7 +79,7 @@ def _select_params(lump_mass):
     return params
 
 
-def solver_CG(el, deg, sd, T, dt=0.001, lump_mass=False, warm_up=False):
+def solver_CG(el, deg, sd, T, N=40, dt=0.001, lump_mass=False, warm_up=False):
 
     mesh = _get_mesh(el, sd, N)
 
@@ -124,24 +121,25 @@ def solver_CG(el, deg, sd, T, dt=0.001, lump_mass=False, warm_up=False):
     a = dot(grad(u_n), grad(v)) * dx  # stiffness matrix
 
     # injection of source into mesh
-    t = 0.0
     ricker = Constant(0.0)
     source = Constant([0.5] * sd)
-    F = m + a - delta_expr(source, *fd.SpatialCoordinate(mesh)) * ricker * v * dx
+    coords = fd.SpatialCoordinate(mesh)
+    F = m + a - delta_expr(source, *coords) * ricker * v * dx
 
     a, r = fd.lhs(F), fd.rhs(F)
-    A = fd.assemble(a)
-    R = fd.assemble(r)
+    A, R = fd.assemble(a), fd.assemble(r)
     solver = fd.LinearSolver(A, solver_parameters=params, options_prefix="")
 
     # timestepping loop
     results = []
+
+    t = 0.0
     for step in range(nt):
 
-        # update the source
-        ricker.assign(RickerWavelet(t))
-
         with PETSc.Log.Stage("{el}{deg}.N{N}".format(el=el, deg=deg, N=N)):
+            # update the source
+            ricker.assign(RickerWavelet(t))
+
             solver.solve(u_np1, R)
 
             snes = _get_time("SNESSolve")
@@ -156,21 +154,22 @@ def solver_CG(el, deg, sd, T, dt=0.001, lump_mass=False, warm_up=False):
                 [N, tot_dof, snes, ksp, pcsetup, pcapply, jac, residual, sparsity]
             )
 
+            u_nm1.assign(u_n)
+            u_n.assign(u_np1)
+
+            t = step * float(dt)
+
+            if step % 10 == 0:
+                outfile.write(u_n)
+                print("Time is " + str(t), flush=True)
+
         if warm_up:
             # Warm up symbolics/disk cache
             solver.solve(u_np1, R)
             sys.exit("Warming up...")
 
-        u_nm1.assign(u_n)
-        u_n.assign(u_np1)
-
-        t = step * float(dt)
-
-        if step % 10 == 0:
-            outfile.write(u_n)
-            print("Time is " + str(t), flush=True)
-
     results = np.asarray(results)
+
     if mesh.comm.rank == 0:
         with open("scalar_wave.{el}.{deg}.csv".format(el=el, deg=deg), "w") as f:
             np.savetxt(
