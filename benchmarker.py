@@ -8,7 +8,7 @@ import numpy as np
 
 import sys
 
-from helpers import RickerWavelet, delta_expr
+from helpers import RickerWavelet, delta_expr, gauss_lobatto_legendre_cube_rule
 
 import os
 
@@ -44,56 +44,59 @@ def _get_mesh(el, sd, N):
     return mesh
 
 
-def _get_space(mesh, el, deg, lump_mass):
-    if lump_mass:
-        if el == "tria":
-            V = fd.FunctionSpace(mesh, "KMV", deg)
-        elif el == "quad":
+def _build_space(mesh, el, space, deg):
+    if el == "tria":
+        V = fd.FunctionSpace(mesh, space, deg)
+    elif el == "quad":
+        if space == "spectral":
             element = fd.FiniteElement(
                 "CG", mesh.ufl_cell(), degree=deg, variant="spectral"
             )
             V = fd.FunctionSpace(mesh, element)
-    else:
-        V = fd.FunctionSpace(mesh, "CG", deg)
-
+        else:
+            raise ValueError("Space not supported yet")
     return V
 
 
-def _get_quad_rule(el, V, lump_mass):
-    if lump_mass:
-        if el == "tria":
-            quad_rule = finat.quadrature.make_quadrature(
-                V.finat_element.cell, V.ufl_element().degree(), "KMV"
-            )
-        elif el == "quad":
-            quad_rule = finat.quadrature.make_quadrature(
-                V.finat_element.cell, V.ufl_element().degree(), "gll"
-            )
-    else:
+def _build_quad_rule(el, V, space):
+    if el == "tria" and space == "KMV":
+        quad_rule = finat.quadrature.make_quadrature(
+            V.finat_element.cell,
+            V.ufl_element().degree(),
+            space,
+        )
+    elif el == "quad" and space == "spectral":
+        quad_rule = gauss_lobatto_legendre_cube_rule(
+            V.mesh().geometric_dimension(), V.ufl_element().degree()
+        )
+    elif el == "tria" and space == "CG":
         quad_rule = None
+    else:
+        raise ValueError("Unsupported element/space combination")
     return quad_rule
 
 
-def _select_params(lump_mass):
-    if lump_mass:
+def _select_params(space):
+    if space == "KMV":
         params = {"ksp_type": "preonly", "pc_type": "jacobi"}
     else:
         params = {"ksp_type": "cg", "pc_type": "jacobi"}
     return params
 
 
-def solver_CG(el, deg, sd, T, N=40, dt=0.001, lump_mass=False, warm_up=False):
+def solver_CG(el, space, deg, sd, T, N=40, dt=0.001, lump_mass=False, warm_up=False):
 
     mesh = _get_mesh(el, sd, N)
 
-    V = _get_space(mesh, el, deg, lump_mass)
+    V = _build_space(mesh, el, space, deg)
 
-    quad_rule = _get_quad_rule(el, V, lump_mass)
+    quad_rule = _build_quad_rule(el, V, space)
 
-    params = _select_params(lump_mass)
+    params = _select_params(space)
 
     # DEBUG
     outfile = fd.File(os.getcwd() + "/results/simple_shots.pvd")
+    # END DEBUG
 
     tot_dof = COMM_WORLD.allreduce(V.dof_dset.total_size, op=MPI.SUM)
     if COMM_WORLD.rank == 0:
@@ -174,7 +177,10 @@ def solver_CG(el, deg, sd, T, N=40, dt=0.001, lump_mass=False, warm_up=False):
 
     results = np.asarray(results)
     if mesh.comm.rank == 0:
-        with open("scalar_wave.{el}.{deg}.csv".format(el=el, deg=deg), "w") as f:
+        with open(
+            "scalar_wave.{el}.{deg}.{space}.csv".format(el=el, deg=deg, space=space),
+            "w",
+        ) as f:
             np.savetxt(
                 f,
                 results,
@@ -186,4 +192,4 @@ def solver_CG(el, deg, sd, T, N=40, dt=0.001, lump_mass=False, warm_up=False):
 
 
 # Call the solvers to do the benchmarking
-solver_CG(el="quad", deg=1, sd=2, T=1.0, dt=0.0005, lump_mass=True)
+solver_CG(el="quad", space="spectral", deg=2, sd=2, T=1.0, dt=0.001)
