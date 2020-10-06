@@ -53,6 +53,8 @@ def _build_space(mesh, el, space, deg):
                 "CG", mesh.ufl_cell(), degree=deg, variant="spectral"
             )
             V = fd.FunctionSpace(mesh, element)
+        elif space == "S":
+            V = fd.FunctionSpace(mesh, "S", deg)
         else:
             raise ValueError("Space not supported yet")
     return V
@@ -69,6 +71,8 @@ def _build_quad_rule(el, V, space):
         quad_rule = gauss_lobatto_legendre_cube_rule(
             V.mesh().geometric_dimension(), V.ufl_element().degree()
         )
+    elif el == "quad" and space == "S":
+        quad_rule = None
     elif el == "tria" and space == "CG":
         quad_rule = None
     else:
@@ -84,7 +88,39 @@ def _select_params(space):
     return params
 
 
-def solver_CG(el, space, deg, sd, T, N=40, dt=0.001, lump_mass=False, warm_up=False):
+def solver_CG(el, space, deg, sd, T, N=40, dt=0.001, warm_up=False):
+    """Solve the scalar wave equation on a unit square/cube using a
+    CG FEM formulation with several different element types.
+
+    Parameters
+    ----------
+    el: string
+        The type of element either "tria" or "quad"
+    space: string
+        The space of the FEM. Available options are:
+            "CG": Continuous Galerkin Finite Elements,
+            "KMV": Kong-Mulder-Veldhuzien higher-order mass lumped elements
+            "S" (for Serendipity) (NB: quad/hexs only)
+            "spectral": tradiational spectral elements using GLL quad points (NB: quads/hexs only)
+    deg: int
+        The spatial polynomial degree.
+    sd: int
+        The geoemtric dimension of the problem.
+    T: float
+        The duration in simulation seconds of the simulation.
+    N: int
+        The number of grid points per dimension
+    dt: float
+        Simulation timestep
+    warm_up: boolean, optional
+        Warm up symbolics by running one timestep and shutting down.
+
+    Returns
+    -------
+    None
+
+
+    """
 
     mesh = _get_mesh(el, sd, N)
 
@@ -191,5 +227,5 @@ def solver_CG(el, space, deg, sd, T, N=40, dt=0.001, lump_mass=False, warm_up=Fa
             )
 
 
-# Call the solvers to do the benchmarking
-solver_CG(el="quad", space="spectral", deg=2, sd=2, T=1.0, dt=0.001)
+# Test: call the solvers to do the benchmarking
+solver_CG(el="quad", space="S", deg=2, sd=2, T=1.0, dt=0.001)
