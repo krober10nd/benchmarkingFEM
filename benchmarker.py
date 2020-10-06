@@ -6,19 +6,18 @@ import finat
 from mpi4py import MPI
 import numpy as np
 
-import time
 import sys
 
 from helpers import RickerWavelet, delta_expr
 
-# import os
+import os
 
 __all__ = ["solver_CG"]
 
 PETSc.Log().begin()
 
 
-def get_time(event, comm=COMM_WORLD):
+def _get_time(event, comm=COMM_WORLD):
     return (
         comm.allreduce(PETSc.Log.Event(event).getPerfInfo()["time"], op=MPI.SUM)
         / comm.size
@@ -28,40 +27,73 @@ def get_time(event, comm=COMM_WORLD):
 N = 20
 
 
-def solver_CG(el, deg, sd, T, dt=0.001, lump_mass=False, warm_up=False):
+def _get_mesh(el, sd, N):
     if sd == 2:
         if el == "tria":
             mesh = fd.UnitSquareMesh(N, N)
         elif el == "quad":
-            mesh = fd.UnitSquareMesh(N, N, quadilateral=True)
+            mesh = fd.UnitSquareMesh(N, N, quadrilateral=True)
         else:
             raise ValueError("Unrecognized element type")
     elif sd == 3:
         if el == "tetra":
             mesh = fd.UnitCubeMesh(N, N, N)
-        elif el == "quad":
-            mesh = fd.UnitCubeMesh(N, N, N, quadilateral=True)
+        elif el == "hexa":
+            mesh = fd.UnitCubeMesh(N, N, N, quadrilateral=True)
         else:
             raise ValueError("Unrecognized element type")
+    else:
+        raise ValueError("Invalid dimension")
+    return mesh
 
+
+def _get_space(mesh, el, deg, lump_mass):
     if lump_mass:
-        V = fd.FunctionSpace(mesh, "KMV", deg)
+        if el == "tria":
+            V = fd.FunctionSpace(mesh, "KMV", deg)
+        elif el == "quad":
+            V = fd.FunctionSpace(mesh, "CG", deg)
     else:
         V = fd.FunctionSpace(mesh, "CG", deg)
 
-    if lump_mass:
-        quad_rule = finat.quadrature.make_quadrature(
-            V.finat_element.cell, V.ufl_element().degree(), "KMV"
-        )
+    return V
 
-        params = {"ksp_type": "preonly", "pc_type": "jacobi"}
-        # if nspool > 0:
-        #    outfile = File(os.getcwd() + "/results/simple_shots_lumped.pvd")
+
+def _get_quad_rule(el, V, lump_mass):
+    if lump_mass:
+        if el == "tria":
+            quad_rule = finat.quadrature.make_quadrature(
+                V.finat_element.cell, V.ufl_element().degree(), "KMV"
+            )
+        elif el == "quad":
+            quad_rule = finat.quadrature.make_quadrature(
+                V.finat_element.cell, V.ufl_element().degree(), "gll"
+            )
     else:
         quad_rule = None
+    return quad_rule
+
+
+def _select_params(lump_mass):
+    if lump_mass:
+        params = {"ksp_type": "preonly", "pc_type": "jacobi"}
+    else:
         params = {"ksp_type": "cg", "pc_type": "jacobi"}
-        # if nspool > 0:
-        #    outfile = File(os.getcwd() + "/results/simple_shots.pvd")
+    return params
+
+
+def solver_CG(el, deg, sd, T, dt=0.001, lump_mass=False, warm_up=False):
+
+    mesh = _get_mesh(el, sd, N)
+
+    V = _get_space(mesh, el, deg, lump_mass)
+
+    quad_rule = _get_quad_rule(el, V, lump_mass)
+
+    params = _select_params(lump_mass)
+
+    # DEBUG
+    outfile = fd.File(os.getcwd() + "/results/simple_shots.pvd")
 
     tot_dof = COMM_WORLD.allreduce(V.dof_dset.total_size, op=MPI.SUM)
     if COMM_WORLD.rank == 0:
@@ -88,27 +120,16 @@ def solver_CG(el, deg, sd, T, dt=0.001, lump_mass=False, warm_up=False):
         * v
         * dx(rule=quad_rule)
     )  # mass-like matrix
+
     a = dot(grad(u_n), grad(v)) * dx  # stiffness matrix
 
     # injection of source into mesh
-    if sd == 2:
-        x, y = fd.SpatialCoordinate(mesh)
-        source = Constant([0.5, 0.5])
-        delta = fd.Interpolator(delta_expr(source, x, y), V)
-    else:
-        x, y, z = fd.SpatialCoordinate(mesh)
-        source = Constant([0.5, 0.5, 0.5])
-        delta = fd.Interpolator(delta_expr(source, x, y, z), V)
-
     t = 0.0
-
     ricker = Constant(0.0)
-    f = fd.Function(delta.interpolate()) * ricker
-    ricker.assign(RickerWavelet(t))
+    source = Constant([0.5] * sd)
+    F = m + a - delta_expr(source, *fd.SpatialCoordinate(mesh)) * ricker * v * dx
 
-    F = m + a - f * v * dx  # form
-    a = fd.lhs(F)
-    r = fd.rhs(F)
+    a, r = fd.lhs(F), fd.rhs(F)
     A = fd.assemble(a)
     R = fd.assemble(r)
     solver = fd.LinearSolver(A, solver_parameters=params, options_prefix="")
@@ -117,21 +138,19 @@ def solver_CG(el, deg, sd, T, dt=0.001, lump_mass=False, warm_up=False):
     results = []
     for step in range(nt):
 
-        t = step * float(dt)
-
         # update the source
         ricker.assign(RickerWavelet(t))
 
         with PETSc.Log.Stage("{el}{deg}.N{N}".format(el=el, deg=deg, N=N)):
             solver.solve(u_np1, R)
 
-            snes = get_time("SNESSolve")
-            ksp = get_time("KSPSolve")
-            pcsetup = get_time("PCSetUp")
-            pcapply = get_time("PCApply")
-            jac = get_time("SNESJacobianEval")
-            residual = get_time("SNESFunctionEval")
-            sparsity = get_time("CreateSparsity")
+            snes = _get_time("SNESSolve")
+            ksp = _get_time("KSPSolve")
+            pcsetup = _get_time("PCSetUp")
+            pcapply = _get_time("PCApply")
+            jac = _get_time("SNESJacobianEval")
+            residual = _get_time("SNESFunctionEval")
+            sparsity = _get_time("CreateSparsity")
 
             results.append(
                 [N, tot_dof, snes, ksp, pcsetup, pcapply, jac, residual, sparsity]
@@ -145,9 +164,12 @@ def solver_CG(el, deg, sd, T, dt=0.001, lump_mass=False, warm_up=False):
         u_nm1.assign(u_n)
         u_n.assign(u_np1)
 
-        if step % 100 == 0:
-            # outfile.write(u_n)
+        t = step * float(dt)
+
+        if step % 10 == 0:
+            outfile.write(u_n)
             print("Time is " + str(t), flush=True)
+
     results = np.asarray(results)
     if mesh.comm.rank == 0:
         with open("scalar_wave.{el}.{deg}.csv".format(el=el, deg=deg), "w") as f:
@@ -161,5 +183,5 @@ def solver_CG(el, deg, sd, T, dt=0.001, lump_mass=False, warm_up=False):
             )
 
 
-# Call the solvers to do the benchmarking!
-solver_CG("tria", 1, 2, 1.0)
+# Call the solvers to do the benchmarking
+solver_CG(el="tria", deg=1, sd=2, T=1.0, lump_mass=False)
