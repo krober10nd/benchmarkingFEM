@@ -137,8 +137,9 @@ def solver_CG(el, deg, sd, T, N=40, dt=0.001, lump_mass=False, warm_up=False):
     for step in range(nt):
 
         with PETSc.Log.Stage("{el}{deg}.N{N}".format(el=el, deg=deg, N=N)):
-            # update the source
             ricker.assign(RickerWavelet(t))
+
+            R = fd.assemble(r, tensor=R)
 
             solver.solve(u_np1, R)
 
@@ -154,22 +155,21 @@ def solver_CG(el, deg, sd, T, N=40, dt=0.001, lump_mass=False, warm_up=False):
                 [N, tot_dof, snes, ksp, pcsetup, pcapply, jac, residual, sparsity]
             )
 
-            u_nm1.assign(u_n)
-            u_n.assign(u_np1)
-
-            t = step * float(dt)
-
-            if step % 10 == 0:
-                outfile.write(u_n)
-                print("Time is " + str(t), flush=True)
-
         if warm_up:
             # Warm up symbolics/disk cache
             solver.solve(u_np1, R)
             sys.exit("Warming up...")
 
-    results = np.asarray(results)
+        u_nm1.assign(u_n)
+        u_n.assign(u_np1)
 
+        t = step * float(dt)
+
+        if step % 10 == 0:
+            outfile.write(u_n)
+            print("Time is " + str(t), flush=True)
+
+    results = np.asarray(results)
     if mesh.comm.rank == 0:
         with open("scalar_wave.{el}.{deg}.csv".format(el=el, deg=deg), "w") as f:
             np.savetxt(
