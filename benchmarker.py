@@ -50,22 +50,26 @@ def _build_space(mesh, el, space, deg):
 
 def _build_quad_rule(el, V, space):
     if el == "tria" and space == "KMV":
-        quad_rule = finat.quadrature.make_quadrature(
+        quad_rule_mass_matrix = finat.quadrature.make_quadrature(
             V.finat_element.cell,
             V.ufl_element().degree(),
             space,
         )
+        quad_rule_general = None
     elif el == "quad" and space == "spectral":
-        quad_rule = gauss_lobatto_legendre_cube_rule(
+        quad_rule_mass_matrix = gauss_lobatto_legendre_cube_rule(
             V.mesh().geometric_dimension(), V.ufl_element().degree()
         )
+        quad_rule_general = quad_rule_mass_matrix
     elif el == "quad" and space == "S":
-        quad_rule = None
+        quad_rule_mass_matrix = None
+        quad_rule_general = None
     elif el == "tria" and space == "CG":
-        quad_rule = None
+        quad_rule_mass_matrix = None
+        quad_rule_general = None
     else:
         raise ValueError("Unsupported element/space combination")
-    return quad_rule
+    return (quad_rule_mass_matrix, quad_rule_general)
 
 
 def _select_params(space):
@@ -116,7 +120,7 @@ def solver_CG(mesh, el, space, deg, T, dt=0.001, warm_up=False):
 
     V = _build_space(mesh, el, space, deg)
 
-    quad_rule = _build_quad_rule(el, V, space)
+    quad_rule1, quad_rule2 = _build_quad_rule(el, V, space)
 
     params = _select_params(space)
 
@@ -147,16 +151,16 @@ def solver_CG(mesh, el, space, deg, T, dt=0.001, warm_up=False):
         * (u - 2.0 * u_n + u_nm1)
         / Constant(dt * dt)
         * v
-        * dx(rule=quad_rule)
+        * dx(rule=quad_rule1)
     )  # mass-like matrix
 
-    a = dot(grad(u_n), grad(v)) * dx  # stiffness matrix
+    a = dot(grad(u_n), grad(v)) * dx(rule=quad_rule2)  # stiffness matrix
 
     # injection of source into mesh
     ricker = Constant(0.0)
     source = Constant([0.5] * sd)
     coords = fd.SpatialCoordinate(mesh)
-    F = m + a - delta_expr(source, *coords) * ricker * v * dx
+    F = m + a - delta_expr(source, *coords) * ricker * v * dx(rule=quad_rule2)
 
     a, r = fd.lhs(F), fd.rhs(F)
     A, R = fd.assemble(a), fd.assemble(r)
