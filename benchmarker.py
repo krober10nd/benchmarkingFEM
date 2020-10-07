@@ -17,31 +17,19 @@ __all__ = ["solver_CG"]
 PETSc.Log().begin()
 
 
+if COMM_WORLD.rank == 0:
+    if not os.path.exists("data"):
+        os.makedirs("data")
+    elif not os.path.isdir("data"):
+        raise RuntimeError("Cannot create output directory, file of given name exists")
+COMM_WORLD.barrier()
+
+
 def _get_time(event, comm=COMM_WORLD):
     return (
         comm.allreduce(PETSc.Log.Event(event).getPerfInfo()["time"], op=MPI.SUM)
         / comm.size
     )
-
-
-def _get_mesh(el, sd, N):
-    if sd == 2:
-        if el == "tria":
-            mesh = fd.UnitSquareMesh(N, N)
-        elif el == "quad":
-            mesh = fd.UnitSquareMesh(N, N, quadrilateral=True)
-        else:
-            raise ValueError("Unrecognized element type")
-    elif sd == 3:
-        if el == "tria":
-            mesh = fd.UnitCubeMesh(N, N, N)
-        elif el == "quad":
-            mesh = fd.UnitCubeMesh(N, N, N, quadrilateral=True)
-        else:
-            raise ValueError("Unrecognized element type")
-    else:
-        raise ValueError("Invalid dimension")
-    return mesh
 
 
 def _build_space(mesh, el, space, deg):
@@ -88,41 +76,43 @@ def _select_params(space):
     return params
 
 
-def solver_CG(el, space, deg, sd, T, N=40, dt=0.001, warm_up=False):
+def solver_CG(mesh, el, space, deg, T, dt=0.001, warm_up=False):
     """Solve the scalar wave equation on a unit square/cube using a
     CG FEM formulation with several different element types.
 
     Parameters
     ----------
+    mesh: Firedrake.mesh
+        A utility mesh from the Firedrake package
     el: string
-        The type of element either "tria" or "quad"
+        The type of element either "tria" or "quad".
+        `tria` in 3d implies tetrahedra and
+        `quad` in 3d implies hexahedral elements.
     space: string
         The space of the FEM. Available options are:
             "CG": Continuous Galerkin Finite Elements,
             "KMV": Kong-Mulder-Veldhuzien higher-order mass lumped elements
             "S" (for Serendipity) (NB: quad/hexs only)
-            "spectral": tradiational spectral elements using GLL quad points (NB: quads/hexs only)
+            "spectral": spectral elements using GLL quad
+                        points (NB: quads/hexs only)
     deg: int
         The spatial polynomial degree.
-    sd: int
-        The geoemtric dimension of the problem.
     T: float
-        The duration in simulation seconds of the simulation.
-    N: int
-        The number of grid points per dimension
-    dt: float
+        The simulation duration in simulation seconds.
+    dt: float, optional
         Simulation timestep
     warm_up: boolean, optional
         Warm up symbolics by running one timestep and shutting down.
 
     Returns
     -------
-    None
+    u_n: Firedrake.Function
+        The solution at time `T`
 
 
     """
 
-    mesh = _get_mesh(el, sd, N)
+    sd = mesh.geometric_dimension()
 
     V = _build_space(mesh, el, space, deg)
 
@@ -178,7 +168,7 @@ def solver_CG(el, space, deg, sd, T, N=40, dt=0.001, warm_up=False):
     t = 0.0
     for step in range(nt):
 
-        with PETSc.Log.Stage("{el}{deg}.N{N}".format(el=el, deg=deg, N=N)):
+        with PETSc.Log.Stage("{el}{deg}".format(el=el, deg=deg)):
             ricker.assign(RickerWavelet(t, freq=6))
 
             R = fd.assemble(r, tensor=R)
@@ -194,7 +184,7 @@ def solver_CG(el, space, deg, sd, T, N=40, dt=0.001, warm_up=False):
             sparsity = _get_time("CreateSparsity")
 
             results.append(
-                [N, tot_dof, snes, ksp, pcsetup, pcapply, jac, residual, sparsity]
+                [tot_dof, snes, ksp, pcsetup, pcapply, jac, residual, sparsity]
             )
 
         if warm_up:
@@ -214,18 +204,18 @@ def solver_CG(el, space, deg, sd, T, N=40, dt=0.001, warm_up=False):
     results = np.asarray(results)
     if mesh.comm.rank == 0:
         with open(
-            "scalar_wave.{el}.{deg}.{space}.csv".format(el=el, deg=deg, space=space),
+            "data/scalar_wave.{el}.{deg}.{space}.csv".format(
+                el=el, deg=deg, space=space
+            ),
             "w",
         ) as f:
             np.savetxt(
                 f,
                 results,
-                fmt=["%d"] + ["%e"] * 8,
+                fmt=["%d"] + ["%e"] * 7,
                 delimiter=",",
-                header="N,tot_dof,SNESSolve,KSPSolve,PCSetUp,PCApply,SNESJacobianEval,SNESFunctionEval,CreateSparsity",
+                header="tot_dof,SNESSolve,KSPSolve,PCSetUp,PCApply,SNESJacobianEval,SNESFunctionEval,CreateSparsity",
                 comments="",
             )
 
-
-# Test: call the solvers to do the benchmarking
-solver_CG(el="quad", space="S", deg=2, sd=2, T=1.0, dt=0.001)
+    return u_n
