@@ -201,9 +201,9 @@ def solver_CG(mesh, el, space, deg, T, dt=0.001, warm_up=False):
 
         t = step * float(dt)
 
-        if step % 10 == 0:
-            outfile.write(u_n)
-            print("Time is " + str(t), flush=True)
+        #if step % 10 == 0:
+            #outfile.write(u_n)
+            #print("Time is " + str(t), flush=True)
 
     results = np.asarray(results)
     if mesh.comm.rank == 0:
