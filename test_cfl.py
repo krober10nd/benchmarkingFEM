@@ -26,10 +26,10 @@ V_fine = _build_space(mesh,cell_type, space,p)
 
 ## checking dt as f(p) in mesh
 degrees = np.array([1,2,3,4])
-ns = np.array([40, 50, 60, 70])
+ns = np.array([40, 50, 60, 70, 100])
 dts = np.zeros((len(ns),len(degrees)))
 print(dts)
-ref_dt = 0.0001
+ref_dt = 0.00005
 
 i = 0
 for n in ns:
