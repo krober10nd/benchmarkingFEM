@@ -26,15 +26,16 @@ V_fine = _build_space(mesh,cell_type, space,p)
 
 ## checking dt as f(p) in mesh
 degrees = np.array([1,2,3,4])
-ns = np.array([40, 50, 60, 70, 100])
+ns = np.array([50, 100, 200, 400, 800])
 dts = np.zeros((len(ns),len(degrees)))
 print(dts)
-ref_dt = 0.00005
+ref_dts = [0.0005, 0.0003, 0.0003, 6e-5]
 
 i = 0
 for n in ns:
     mesh = UnitSquareMesh(n, n, quadrilateral = quadrilateral)
     ### building reference solution
+    ref_dt = ref_dts[i]
     ref = solver_CG(mesh, el=cell_type, space=space, deg=p, T=0.50, dt=ref_dt)
     j = 0
     for degree in degrees:
@@ -55,7 +56,7 @@ for n in ns:
         j+=1
     i+=1
 
-print(dts)
+print(dts) 
 
 
 def find_fp(ns, degrees,dts):
