@@ -30,7 +30,7 @@ else:
 
 # building reference solution
 p = 1
-initial_dt = 0.0005
+initial_dt = 0.00005
 
 # determining dt as f(p) in mesh
 degrees = [1, 2, 3, 4]
