@@ -16,7 +16,7 @@ from benchmarker import solver_CG, _build_space
 set_log_level(ERROR)
 
 # defining method to analyze
-space = "CG"
+space = "KMV"
 cell_type = "tria"
 error_threshold = 1e-3
 
@@ -45,7 +45,7 @@ ref = solver_CG(mh[-1], el=cell_type, space=space, deg=p, T=0.50, dt=initial_dt)
 V_fine = _build_space(mh[-1], cell_type, space, p)
 
 # step to increase timestep (step << dt)
-step = initial_dt / 10
+step = initial_dt / 2
 
 for i, mesh in enumerate(mh[:-1]):
 
@@ -56,28 +56,27 @@ for i, mesh in enumerate(mh[:-1]):
         error = 0.0
         dt = initial_dt
 
-        for two_pot in [-1,0,1,2,3,4]:
-            while error < error_threshold:
-                # error < error_threshold so increase dt by small amount
-                step = dt/(2**two_pot)
-                dt = dt + step
-                # NB: prolong does not copy so we must re-assign ref sol.
-                fine = Function(V_fine).assign(ref)
-                # Run the simulation with this dt
-                try:
-                    sol = solver_CG(
-                        mesh, el=cell_type, space=space, deg=degree, T=0.50, dt=dt
-                    )
-                    error = errornorm(ref, prolong(sol, fine))
-                except Exception:
-                    # numerical instability occurred, exit with last stable dt
-                    dt = dt - step
-                    error = 1e10
-                #print(
-                 #   "For degree {}, the error is {} using a {} s timestep".format(
-                  #      degree, error, dt
-                   # )
-            #)
+        # increase dt until error > error_threshold
+        while error < error_threshold:
+            # error < error_threshold so increase dt by small amount
+            dt = dt + step
+            # NB: prolong does not copy so we must re-assign ref sol.
+            fine = Function(V_fine).assign(ref)
+            # Run the simulation with this dt
+            try:
+                sol = solver_CG(
+                    mesh, el=cell_type, space=space, deg=degree, T=0.50, dt=dt
+                )
+                error = errornorm(ref, prolong(sol, fine))
+            except Exception:
+                # numerical instability occurred, exit with last stable dt
+                dt = dt - step
+                error = 1e10
+            print(
+                "For degree {}, the error is {} using a {} s timestep".format(
+                    degree, error, dt
+                )
+            )
         # error > error_threshold,
         print(
             "Highest stable dt is {} s for a degree {} for a an error threshold of {}".format(
