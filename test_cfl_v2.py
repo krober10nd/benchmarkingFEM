@@ -56,26 +56,28 @@ for i, mesh in enumerate(mh[:-1]):
         error = 0.0
         dt = initial_dt
 
-        while error < error_threshold:
-            # error < error_threshold so increase dt by small amount
-            dt = dt + step
-            # NB: prolong does not copy so we must re-assign ref sol.
-            fine = Function(V_fine).assign(ref)
-            # Run the simulation with this dt
-            try:
-                sol = solver_CG(
-                    mesh, el=cell_type, space=space, deg=degree, T=0.50, dt=dt
-                )
-                error = errornorm(ref, prolong(sol, fine))
-            except Exception:
-                # numerical instability occurred, exit with last stable dt
-                dt = dt - step
-                error = 1e10
-            print(
-                "For degree {}, the error is {} using a {} s timestep".format(
-                    degree, error, dt
-                )
-            )
+        for two_pot in [-1,0,1,2,3,4]:
+            while error < error_threshold:
+                # error < error_threshold so increase dt by small amount
+                step = dt/(2**two_pot)
+                dt = dt + step
+                # NB: prolong does not copy so we must re-assign ref sol.
+                fine = Function(V_fine).assign(ref)
+                # Run the simulation with this dt
+                try:
+                    sol = solver_CG(
+                        mesh, el=cell_type, space=space, deg=degree, T=0.50, dt=dt
+                    )
+                    error = errornorm(ref, prolong(sol, fine))
+                except Exception:
+                    # numerical instability occurred, exit with last stable dt
+                    dt = dt - step
+                    error = 1e10
+                #print(
+                 #   "For degree {}, the error is {} using a {} s timestep".format(
+                  #      degree, error, dt
+                   # )
+            #)
         # error > error_threshold,
         print(
             "Highest stable dt is {} s for a degree {} for a an error threshold of {}".format(
