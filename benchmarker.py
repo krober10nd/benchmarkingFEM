@@ -125,14 +125,14 @@ def solver_CG(mesh, el, space, deg, T, dt=0.001, warm_up=False):
     params = _select_params(space)
 
     # DEBUG
-    outfile = fd.File(os.getcwd() + "/results/simple_shots.pvd")
+    # outfile = fd.File(os.getcwd() + "/results/simple_shots.pvd")
     # END DEBUG
 
     tot_dof = COMM_WORLD.allreduce(V.dof_dset.total_size, op=MPI.SUM)
-    if COMM_WORLD.rank == 0:
-        print("------------------------------------------")
-        print("The problem has " + str(tot_dof) + " degrees of freedom.")
-        print("------------------------------------------")
+    # if COMM_WORLD.rank == 0:
+    #    print("------------------------------------------")
+    #    print("The problem has " + str(tot_dof) + " degrees of freedom.")
+    #    print("------------------------------------------")
 
     nt = int(T / dt)  # number of timesteps
 
@@ -201,9 +201,9 @@ def solver_CG(mesh, el, space, deg, T, dt=0.001, warm_up=False):
 
         t = step * float(dt)
 
-        if step % 10 == 0:
-            outfile.write(u_n)
-            print("Time is " + str(t), flush=True)
+        # if step % 10 == 0:
+        #    outfile.write(u_n)
+        #    print("Time is " + str(t), flush=True)
 
     results = np.asarray(results)
     if mesh.comm.rank == 0:
