@@ -33,12 +33,12 @@ p = 1
 initial_dt = 0.00005
 
 # determining dt as f(p) in mesh
-degrees = [1, 2, 3, 4]
+degrees = [5]
 mesh = UnitSquareMesh(40, 40, quadrilateral=quadrilateral)
 mh = MeshHierarchy(mesh, 3)
 
 # determine maximum stable timestep with error < error_threshold
-dts = np.zeros((len(mh), len(degrees)))
+dts = np.zeros((len(mh) - 1, len(degrees)))
 
 # construct reference solution
 ref = solver_CG(mh[-1], el=cell_type, space=space, deg=p, T=0.50, dt=initial_dt)
