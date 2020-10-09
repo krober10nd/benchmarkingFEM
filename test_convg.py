@@ -1,22 +1,30 @@
 from firedrake import *
-
+set_log_level(ERROR)
 import numpy as np
 
-from benchmarker import solver_CG
+from benchmarker import solver_CG, _build_space
 
 
 p = 2
 timestep = 0.0005
-space = "KMV"
+space = "spectral"
+cell_type = "quad"
+
+if cell_type == "quad":
+    quadrilateral = True
+elif cell_type == "tria":
+    quadrilateral = False
+else:
+    raise ValueError("Cell type not supported")
 
 
-mesh = UnitSquareMesh(50, 50)
+mesh = UnitSquareMesh(50, 50, quadrilateral = quadrilateral)
 mh = MeshHierarchy(mesh, 2)
 sols = [
-    solver_CG(mesh, el="tria", space=space, deg=p, T=0.50, dt=timestep) for mesh in mh
+    solver_CG(mesh, el=cell_type, space=space, deg=p, T=0.50, dt=timestep) for mesh in mh
 ]
 coarse_on_fine = []
-V = FunctionSpace(mh[-1], space, p)
+V = _build_space(mh[-1],cell_type, space,p) 
 for sol in sols[:-1]:
     fine = Function(V).assign(sols[-1])
     prolong(sol, fine)
